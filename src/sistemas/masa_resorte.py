@@ -133,6 +133,8 @@ class MasaResorteSimple(MasaResorte):
         m, k, x0, v0 = p["m"], p["k"], p["x0"], p["v0"]
         w0 = math.sqrt(k / m)
         A, phi = math.hypot(x0, v0 / w0), math.atan2(v0 / w0, x0)
+        hh = float(cfg.get("h", self.paso_defecto))
+        n_pasos = int(math.floor(float(cfg.get("T", self.tiempo_defecto)) / hh + 1e-9))
         return [
             H("1. Ecuación diferencial original"),
             L(r"m\,\ddot{x}+k\,x=0"),
@@ -158,19 +160,41 @@ class MasaResorteSimple(MasaResorte):
               rf"\quad T=\frac{{2\pi}}{{\omega_0}}={fm(2*math.pi/w0)}\ \text{{s}}"),
             H("9. Energía"),
             L(rf"E=\tfrac12 m v^2+\tfrac12 k x^2=\tfrac12 k A^2={fm(0.5*k*A*A)}\ \text{{J}}\ (\text{{constante}})"),
+            T("La solución analítica conserva la energía exactamente. El método de **Euler "
+              "explícito** no: al integrar $x'=v$, $v'=-\\omega_0^2x$ con paso $h$ se obtiene"),
+            L(r"x_{n+1}=x_n+h\,v_n,\qquad v_{n+1}=v_n-h\,\omega_0^2 x_n"),
+            T("Al sustituir en $E_{n+1}=\\tfrac12 m v_{n+1}^2+\\tfrac12 k x_{n+1}^2$, los términos "
+              "cruzados $\\pm m\\omega_0^2h\\,x_nv_n$ se cancelan y queda"),
+            L(r"E_{n+1}=\left(1+\omega_0^2h^2\right)E_n\;\Rightarrow\;"
+              r"E_n=\left(1+\omega_0^2h^2\right)^nE_0"),
+            T(f"Con $\\omega_0={fm(w0)}$ rad/s y $h={fm(hh)}$ s, el factor por paso es "
+              f"$1+\\omega_0^2h^2={fm(1+w0*w0*hh*hh)}$; en $n={n_pasos}$ pasos la energía "
+              f"crecería un factor ${fm((1+w0*w0*hh*hh)**n_pasos)}$. Es un **sesgo del método**, "
+              "no del modelo físico: el error de truncamiento actúa como amortiguamiento "
+              "negativo. RK4 es de orden 4 (error $O(h^4)$) y mantiene la energía acotada; por "
+              "eso es el método predeterminado."),
         ]
 
     def interpretacion(self, p, t, Z):
         w0 = math.sqrt(p["k"] / p["m"])
         E = self._energia(p, Z)
-        deriva = (E.max() - E.min()) / E[0] if E[0] > 0 else 0.0
+        E0 = E[0]
+        cambio = (E[-1] - E0) / E0 if E0 > 0 else 0.0
+        rango = (E.max() - E.min()) / E0 if E0 > 0 else 0.0
+        if abs(cambio) <= 1e-4:
+            energia = (f"La solución analítica mantiene $E={fm(E0)}$ J constante y la numérica "
+                       f"varía solo {rango:.2e} (relativo): se conserva dentro del error de "
+                       "truncamiento del método.")
+        else:
+            energia = (f"La solución analítica mantiene $E={fm(E0)}$ J constante, pero la numérica "
+                       f"termina en {fm(E[-1])} J (cambio relativo {cambio:+.2e}). Es un error de "
+                       "integración: Euler explícito amplifica la energía un factor "
+                       "$1+\\omega_0^2h^2$ por paso; RK4 y SciPy la mantienen acotada.")
         return [f"El sistema oscila indefinidamente con período {fm(2*math.pi/w0)} s: no hay "
                 "disipación, así que la amplitud no decae.",
                 "Una masa mayor o un resorte más blando **alargan** el período "
                 "($T=2\\pi\\sqrt{m/k}$); no depende de las condiciones iniciales.",
-                f"La energía mecánica oscila numéricamente un {deriva:.2e} (relativo) alrededor "
-                "de un valor constante: la variación es error del método (Euler la hace crecer, "
-                "RK4 casi no la altera)."]
+                energia]
 
 
 class MasaResorteAmortiguado(MasaResorte):

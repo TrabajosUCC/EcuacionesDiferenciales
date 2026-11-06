@@ -74,9 +74,17 @@ def test_simple_frecuencias():
 def test_euler_gana_energia_y_rk4_no():
     _, _, r = corre("simple", T=20.0, h=0.01)
     p = por_clave("simple").defectos()
-    en = lambda Z: 0.5 * Z[:, 1] ** 2 + 2 * Z[:, 0] ** 2
-    assert en(r["Zs"][ig.EULER])[-1] > 1.05 * en(r["Zs"][ig.EULER])[0]
-    assert abs(en(r["Zs"][ig.RK4])[-1] / en(r["Zs"][ig.RK4])[0] - 1) < 1e-6
+    en = lambda Z: 0.5 * p["m"] * Z[:, 1] ** 2 + 0.5 * p["k"] * Z[:, 0] ** 2
+    Ee, Er = en(r["Zs"][ig.EULER]), en(r["Zs"][ig.RK4])
+    assert Ee[-1] > 1.05 * Ee[0]
+    assert abs(Er[-1] / Er[0] - 1) < 1e-6
+    # Euler explícito: E_n = (1 + w0^2 h^2)^n E_0 (crecimiento exacto, no oscilatorio)
+    n, h = len(r["t"]) - 1, 0.01
+    w0 = math.sqrt(p["k"] / p["m"])
+    assert math.isclose(Ee[-1] / Ee[0], (1 + w0 * w0 * h * h) ** n, rel_tol=1e-10)
+    # La solución analítica conserva la energía
+    Ea = en(r["Za"])
+    assert (Ea.max() - Ea.min()) / Ea[0] < 1e-12
 
 
 # ---------- amortiguado ----------
