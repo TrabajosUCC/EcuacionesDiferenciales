@@ -121,6 +121,38 @@ CONFIG_SLIDERS = (
 
 VALORES_DEFECTO = {clave: defecto for clave, _, _, _, defecto, _ in CONFIG_SLIDERS}
 
+# Escenarios didácticos de la guía interactiva.
+# (nombre, m, c, k, k12, descripción)
+ESCENARIOS_GUIA: tuple[tuple[str, float, float, float, float, str], ...] = (
+    (
+        "1. Operación Normal (Defecto)",
+        1.0,
+        0.8,
+        3.0,
+        1.2,
+        "Configuración de referencia: el IPS aplica cooldown y el sistema "
+        "vuelve al equilibrio de forma asintótica.",
+    ),
+    (
+        "2. Sin Cooldown IPS (Marginal)",
+        1.0,
+        0.0,
+        3.0,
+        1.2,
+        "Sin amortiguamiento (c = 0) la energía no se disipa: la anomalía "
+        "oscila de forma sostenida y el sistema queda en el límite de estabilidad.",
+    ),
+    (
+        "3. Rigidez Extrema (Límite RK4)",
+        0.2,
+        0.0,
+        12.0,
+        6.0,
+        "Masa mínima y rigidez máxima: aparecen modos muy rápidos y el paso "
+        "fijo de RK4 pierde precisión frente a la solución exacta.",
+    ),
+)
+
 
 # =============================================================================
 # 2. CAPA 1: MODELADO MATEMÁTICO
@@ -351,6 +383,12 @@ class SimuladorDevOps(ctk.CTk):
         self.valores_labels: dict[str, ctk.CTkLabel] = {}
         self._job_actualizacion: str | None = None
 
+        # Último resultado simulado y estado de la ventana de ayuda.
+        self._ultimo_resultado: ResultadoSimulacion | None = None
+        self._ventana_guia: ctk.CTkToplevel | None = None
+        self._guia_live_labels: dict[str, ctk.CTkLabel] = {}
+        self._guia_escenario_label: ctk.CTkLabel | None = None
+
         # Construcción de la interfaz.
         self._crear_sidebar()
         self._crear_panel_principal()
@@ -380,7 +418,7 @@ class SimuladorDevOps(ctk.CTk):
             font=("Segoe UI", 11, "bold"),
             text_color=COLOR_ACENTO,
             anchor="w",
-        ).pack(fill="x", padx=28, pady=(26, 4))
+        ).pack(fill="x", padx=28, pady=(20, 4))
 
         ctk.CTkLabel(
             self.sidebar,
@@ -406,7 +444,7 @@ class SimuladorDevOps(ctk.CTk):
 
         # Contenedor de sliders: sin separadores ni bordes duros.
         sliders_frame = ctk.CTkFrame(self.sidebar, fg_color="transparent")
-        sliders_frame.pack(fill="x", padx=28, pady=(24, 0))
+        sliders_frame.pack(fill="x", padx=28, pady=(16, 0))
 
         for clave, etiqueta, minimo, maximo, defecto, pasos in CONFIG_SLIDERS:
             self._crear_tarjeta_slider(
@@ -430,7 +468,23 @@ class SimuladorDevOps(ctk.CTk):
             hover_color="#2563eb",
             font=("Segoe UI", 12, "bold"),
         )
-        self.boton_reset.pack(fill="x", padx=28, pady=(10, 14))
+        self.boton_reset.pack(fill="x", padx=28, pady=(8, 6))
+
+        # Botón secundario y discreto de ayuda interactiva.
+        self.boton_guia = ctk.CTkButton(
+            self.sidebar,
+            text="Guía e Interpretación en Vivo",
+            command=self._abrir_guia_interactiva,
+            height=38,
+            corner_radius=8,
+            fg_color=COLOR_TARJETA,
+            border_width=1,
+            border_color=COLOR_BORDE,
+            hover_color=COLOR_BORDE,
+            text_color=COLOR_TEXTO,
+            font=("Segoe UI", 12),
+        )
+        self.boton_guia.pack(fill="x", padx=28, pady=(0, 10))
 
         # Nota sobre el caso marginal.
         ctk.CTkLabel(
@@ -449,7 +503,7 @@ class SimuladorDevOps(ctk.CTk):
             fg_color=COLOR_TARJETA,
             corner_radius=8,
         )
-        self.tarjeta_matriz.pack(fill="x", padx=28, pady=(20, 28))
+        self.tarjeta_matriz.pack(fill="x", padx=28, pady=(14, 16))
 
         ctk.CTkLabel(
             self.tarjeta_matriz,
@@ -457,7 +511,7 @@ class SimuladorDevOps(ctk.CTk):
             font=("Segoe UI", 11, "bold"),
             text_color=COLOR_TEXTO,
             anchor="w",
-        ).pack(fill="x", padx=16, pady=(14, 4))
+        ).pack(fill="x", padx=16, pady=(10, 4))
 
         ctk.CTkLabel(
             self.tarjeta_matriz,
@@ -475,7 +529,7 @@ class SimuladorDevOps(ctk.CTk):
             justify="left",
             anchor="w",
         )
-        self.matriz_label.pack(fill="x", padx=16, pady=(8, 6))
+        self.matriz_label.pack(fill="x", padx=16, pady=(6, 4))
 
         ctk.CTkLabel(
             self.tarjeta_matriz,
@@ -483,7 +537,7 @@ class SimuladorDevOps(ctk.CTk):
             font=("Segoe UI", 9),
             text_color=COLOR_TEXTO_SUAVE,
             anchor="w",
-        ).pack(fill="x", padx=16, pady=(0, 14))
+        ).pack(fill="x", padx=16, pady=(0, 10))
 
     def _crear_tarjeta_slider(
         self,
@@ -502,10 +556,10 @@ class SimuladorDevOps(ctk.CTk):
             fg_color=COLOR_TARJETA,
             corner_radius=8,
         )
-        tarjeta.pack(fill="x", pady=(0, 12))
+        tarjeta.pack(fill="x", pady=(0, 8))
 
         fila = ctk.CTkFrame(tarjeta, fg_color="transparent")
-        fila.pack(fill="x", padx=16, pady=(14, 0))
+        fila.pack(fill="x", padx=16, pady=(10, 0))
 
         ctk.CTkLabel(
             fila,
@@ -536,7 +590,7 @@ class SimuladorDevOps(ctk.CTk):
             button_hover_color="#60a5fa",
         )
         slider.set(defecto)
-        slider.pack(fill="x", padx=16, pady=(4, 14))
+        slider.pack(fill="x", padx=16, pady=(2, 10))
 
         self.sliders[clave] = slider
         self.valores_labels[clave] = valor_label
@@ -853,9 +907,13 @@ class SimuladorDevOps(ctk.CTk):
             A = construir_matriz_A(p)
             resultado = simular(p)
 
+            # Se conserva el último resultado para la guía interactiva.
+            self._ultimo_resultado = resultado
+
             self._actualizar_matriz(A)
             self._actualizar_textos(resultado)
             self._actualizar_grafica(resultado)
+            self._refrescar_guia()
 
         except Exception as exc:
             # La interfaz no debe cerrarse si ocurre un error inesperado.
@@ -1077,6 +1135,467 @@ class SimuladorDevOps(ctk.CTk):
     # -------------------------------------------------------------------------
     # 6.4 ACCIONES DE LA INTERFAZ
     # -------------------------------------------------------------------------
+
+    def _abrir_guia_interactiva(self) -> None:
+        """Abre la guía interactiva o enfoca la ventana si ya está abierta."""
+
+        if self._guia_abierta():
+            assert self._ventana_guia is not None
+            self._ventana_guia.focus()
+            self._ventana_guia.lift()
+            return
+
+        ventana = ctk.CTkToplevel(self)
+        self._ventana_guia = ventana
+        ventana.title("Guía e Interpretación en Vivo")
+        ventana.configure(fg_color=COLOR_FONDO)
+        ventana.transient(self)
+        ventana.protocol("WM_DELETE_WINDOW", self._cerrar_guia)
+
+        ventana.grid_columnconfigure(0, weight=1)
+        ventana.grid_rowconfigure(1, weight=1)
+
+        # Encabezado de la ventana emergente.
+        cabecera = ctk.CTkFrame(ventana, fg_color="transparent")
+        cabecera.grid(row=0, column=0, sticky="ew", padx=24, pady=(20, 14))
+
+        ctk.CTkLabel(
+            cabecera,
+            text="Guía e Interpretación en Vivo",
+            font=("Segoe UI", 20, "bold"),
+            text_color=COLOR_TEXTO,
+            anchor="w",
+        ).pack(fill="x")
+
+        ctk.CTkLabel(
+            cabecera,
+            text=(
+                "Explicación dinámica del modelo, del método numérico "
+                "y de los escenarios de prueba."
+            ),
+            font=("Segoe UI", 11),
+            text_color=COLOR_TEXTO_SUAVE,
+            anchor="w",
+            justify="left",
+            wraplength=740,
+        ).pack(fill="x", pady=(4, 0))
+
+        # Pestañas de la guía.
+        pestanas = ctk.CTkTabview(
+            ventana,
+            fg_color=COLOR_TARJETA,
+            segmented_button_fg_color=COLOR_FONDO,
+            segmented_button_selected_color=COLOR_ACENTO,
+            segmented_button_selected_hover_color="#2563eb",
+            segmented_button_unselected_color=COLOR_FONDO,
+            segmented_button_unselected_hover_color=COLOR_BORDE,
+            text_color=COLOR_TEXTO,
+            corner_radius=8,
+        )
+        pestanas.grid(row=1, column=0, sticky="nsew", padx=20, pady=(0, 20))
+
+        pestana_vivo = pestanas.add("Análisis Actual (En Vivo)")
+        pestana_capas = pestanas.add("Las 4 Capas del Modelo")
+        pestana_escenarios = pestanas.add("Escenarios de Prueba")
+
+        self._guia_live_labels.clear()
+        self._crear_pestana_analisis(pestana_vivo)
+        self._crear_pestana_capas(pestana_capas)
+        self._crear_pestana_escenarios(pestana_escenarios)
+
+        # Centrado sobre la ventana principal.
+        ventana.update_idletasks()
+        ancho, alto = 880, 660
+        x = self.winfo_rootx() + max((self.winfo_width() - ancho) // 2, 0)
+        y = self.winfo_rooty() + max((self.winfo_height() - alto) // 2, 0)
+        ventana.geometry(f"{ancho}x{alto}+{x}+{y}")
+        ventana.minsize(820, 560)
+
+        self._refrescar_guia()
+        ventana.lift()
+        ventana.focus_force()
+
+    def _cerrar_guia(self) -> None:
+        """Cierra la guía interactiva y libera las referencias a sus widgets."""
+
+        ventana = self._ventana_guia
+        if ventana is not None:
+            try:
+                if ventana.winfo_exists():
+                    ventana.destroy()
+            except Exception:
+                pass
+
+        self._ventana_guia = None
+        self._guia_live_labels.clear()
+        self._guia_escenario_label = None
+
+    def _guia_abierta(self) -> bool:
+        """Indica si la ventana de la guía sigue existiendo."""
+
+        if self._ventana_guia is None:
+            return False
+
+        try:
+            return bool(self._ventana_guia.winfo_exists())
+        except Exception:
+            return False
+
+    def _crear_tarjeta_guia(
+        self,
+        parent: ctk.CTkScrollableFrame,
+        titulo: str,
+    ) -> ctk.CTkLabel:
+        """Crea una tarjeta de la guía y devuelve la etiqueta de su cuerpo."""
+
+        tarjeta = ctk.CTkFrame(
+            parent,
+            fg_color=COLOR_FONDO,
+            corner_radius=8,
+        )
+        tarjeta.pack(fill="x", padx=4, pady=(0, 12))
+
+        ctk.CTkLabel(
+            tarjeta,
+            text=titulo,
+            font=("Segoe UI", 11, "bold"),
+            text_color=COLOR_ACENTO,
+            anchor="w",
+        ).pack(fill="x", padx=16, pady=(14, 4))
+
+        cuerpo = ctk.CTkLabel(
+            tarjeta,
+            text="",
+            font=("Segoe UI", 11),
+            text_color=COLOR_TEXTO_SUAVE,
+            justify="left",
+            anchor="w",
+            wraplength=700,
+        )
+        cuerpo.pack(fill="x", padx=16, pady=(0, 14))
+
+        return cuerpo
+
+    def _crear_pestana_analisis(self, pestana: ctk.CTkFrame) -> None:
+        """Construye la pestaña con el análisis dinámico del estado actual."""
+
+        pestana.grid_columnconfigure(0, weight=1)
+        pestana.grid_rowconfigure(0, weight=1)
+
+        marco = ctk.CTkScrollableFrame(pestana, fg_color="transparent")
+        marco.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
+
+        self._guia_live_labels = {
+            "estado": self._crear_tarjeta_guia(
+                marco,
+                "Estado actual y acoplamiento Edge-WAF",
+            ),
+            "decaimiento": self._crear_tarjeta_guia(
+                marco,
+                "Abscisa espectral y tiempo de estabilización",
+            ),
+            "error": self._crear_tarjeta_guia(
+                marco,
+                "Solución analítica vs. precisión de RK4",
+            ),
+        }
+
+    def _crear_pestana_capas(self, pestana: ctk.CTkFrame) -> None:
+        """Construye la pestaña que explica las cuatro capas del código."""
+
+        pestana.grid_columnconfigure(0, weight=1)
+        pestana.grid_rowconfigure(0, weight=1)
+
+        marco = ctk.CTkScrollableFrame(pestana, fg_color="transparent")
+        marco.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
+
+        capas: tuple[tuple[str, str], ...] = (
+            (
+                "Capa 1 · Matriz A 4×4 y acoplamiento Edge-WAF",
+                "construir_matriz_A ensambla la matriz de estado a partir de m, c, k "
+                "y k12. Cada capa de defensa aporta un lazo de segundo orden "
+                "(anomalía y velocidad de respuesta) y el término k12/m acopla el "
+                "Firewall Perimetral con el WAF Interno. Si k12 = 0, ambas capas "
+                "evolucionan de forma independiente.",
+            ),
+            (
+                "Capa 2 · Solución exacta y autovalores",
+                "solucion_analitica evalúa x(t) = expm(A·t)·x(0) sobre toda la malla "
+                "temporal, por lo que la curva analítica es la referencia exacta. "
+                "calcular_autovalores usa scipy.linalg.eigvals y la abscisa espectral "
+                "Re(λmáx) decide la clasificación: negativa ⇒ estable, nula ⇒ "
+                "marginal, positiva ⇒ inestable.",
+            ),
+            (
+                "Capa 3 · Runge-Kutta 4 manual con bucle explícito",
+                "rk4_lineal implementa las cuatro etapas clásicas (k1, k2, k3, k4) "
+                "dentro de un bucle for explícito, sin integradores automáticos. "
+                "Con Δt = 0.075 u.t. el método es de cuarto orden: al refinar la "
+                "malla el error cae aproximadamente como Δt⁴, pero con rigidez "
+                "extrema el paso fijo puede dejar de resolver los modos rápidos.",
+            ),
+            (
+                "Capa 4 · Simulación reactiva",
+                "SimuladorDevOps conecta los cuatro sliders con _actualizar_todo, "
+                "que reconstruye A, recalcula la solución analítica y la numérica, "
+                "actualiza KPIs, autovalores y gráfica. Un debounce de 25 ms evita "
+                "lanzar decenas de simulaciones mientras se arrastra un control. "
+                "Esta guía se refresca con cada recálculo.",
+            ),
+        )
+
+        for titulo, texto in capas:
+            cuerpo = self._crear_tarjeta_guia(marco, titulo)
+            cuerpo.configure(text=texto)
+
+    def _crear_pestana_escenarios(self, pestana: ctk.CTkFrame) -> None:
+        """Construye la pestaña con los escenarios de prueba interactivos."""
+
+        pestana.grid_columnconfigure(0, weight=1)
+        pestana.grid_rowconfigure(0, weight=1)
+
+        marco = ctk.CTkScrollableFrame(pestana, fg_color="transparent")
+        marco.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
+
+        ctk.CTkLabel(
+            marco,
+            text=(
+                "Cada botón aplica los parámetros al panel principal, "
+                "recalcula la simulación y actualiza esta guía."
+            ),
+            font=("Segoe UI", 11),
+            text_color=COLOR_TEXTO_SUAVE,
+            anchor="w",
+            justify="left",
+            wraplength=700,
+        ).pack(fill="x", padx=4, pady=(4, 12))
+
+        for nombre, m, c, k, k12, descripcion in ESCENARIOS_GUIA:
+            ctk.CTkButton(
+                marco,
+                text=nombre,
+                command=lambda m=m, c=c, k=k, k12=k12, d=descripcion: (
+                    self._aplicar_escenario(m, c, k, k12, d)
+                ),
+                height=42,
+                corner_radius=8,
+                fg_color=COLOR_TARJETA,
+                border_width=1,
+                border_color=COLOR_BORDE,
+                hover_color=COLOR_BORDE,
+                text_color=COLOR_TEXTO,
+                font=("Segoe UI", 12, "bold"),
+                anchor="w",
+            ).pack(fill="x", padx=4, pady=(0, 10))
+
+        tarjeta = ctk.CTkFrame(
+            marco,
+            fg_color=COLOR_FONDO,
+            corner_radius=8,
+        )
+        tarjeta.pack(fill="x", padx=4, pady=(8, 4))
+
+        ctk.CTkLabel(
+            tarjeta,
+            text="Resultado del escenario",
+            font=("Segoe UI", 11, "bold"),
+            text_color=COLOR_ACENTO,
+            anchor="w",
+        ).pack(fill="x", padx=16, pady=(14, 4))
+
+        self._guia_escenario_label = ctk.CTkLabel(
+            tarjeta,
+            text="Aún no se ha aplicado ningún escenario.",
+            font=("Segoe UI", 11),
+            text_color=COLOR_TEXTO_SUAVE,
+            justify="left",
+            anchor="w",
+            wraplength=700,
+        )
+        self._guia_escenario_label.pack(fill="x", padx=16, pady=(0, 14))
+
+    def _textos_analisis_vivo(self) -> dict[str, str]:
+        """Genera las explicaciones dinámicas de la pestaña en vivo."""
+
+        p = self._leer_parametros()
+        resultado = self._ultimo_resultado
+
+        if resultado is None:
+            sin_datos = "Todavía no hay una simulación calculada."
+            return {
+                "estado": sin_datos,
+                "decaimiento": sin_datos,
+                "error": sin_datos,
+            }
+
+        re_max = resultado.abscisa_espectral
+
+        # --- Estado y acoplamiento -------------------------------------------
+        if abs(p.c) <= TOL_ESTABILIDAD:
+            clasificacion = "MARGINAL (sin cooldown del IPS)"
+            explicacion = (
+                "Con c = 0 no existe disipación de energía en el lazo: la "
+                "anomalía oscila de forma sostenida y no vuelve al equilibrio. "
+                "La respuesta queda en el límite de estabilidad."
+            )
+        elif re_max < -TOL_ESTABILIDAD:
+            clasificacion = "ESTABLE"
+            explicacion = (
+                "El amortiguamiento del IPS domina y todas las perturbaciones "
+                "decaen exponencialmente: la anomalía de tráfico desaparece y el "
+                "sistema vuelve a su línea base."
+            )
+        elif abs(re_max) <= TOL_ESTABILIDAD:
+            clasificacion = "MARGINAL"
+            explicacion = (
+                "La parte real máxima es prácticamente nula: el sistema está en "
+                "el límite de estabilidad y la oscilación no decae."
+            )
+        else:
+            clasificacion = "INESTABLE"
+            explicacion = (
+                "La parte real máxima es positiva: la anomalía crece sin límite "
+                "y la defensa no logra contener el ataque."
+            )
+
+        if abs(p.k12) <= TOL_ESTABILIDAD:
+            acoplamiento = (
+                "Las capas están DESACOPLADAS (k12 = 0): el Firewall Perimetral "
+                "y el WAF Interno evolucionan de forma independiente."
+            )
+        else:
+            acoplamiento = (
+                f"Las capas están ACOPLADAS (k12 = {p.k12:.2f}): parte de la "
+                "anomalía del Edge se transfiere al WAF y ambas respuestas se "
+                "influyen mutuamente."
+            )
+
+        texto_estado = (
+            f"Clasificación: {clasificacion}\n\n"
+            f"{explicacion}\n\n{acoplamiento}"
+        )
+
+        # --- Decaimiento exponencial -----------------------------------------
+        if re_max < -TOL_ESTABILIDAD:
+            tau = 1.0 / abs(re_max)
+            t_est = 3.0 * tau
+            texto_decaimiento = (
+                f"Re(λmáx) = {re_max:+.4f}\n\n"
+                "La envolvente de la respuesta decae como "
+                f"exp({re_max:+.4f}·t).\n"
+                f"Constante de tiempo: τ = 1/|Re(λmáx)| ≈ {tau:.3f} u.t.\n"
+                f"Tiempo aproximado de estabilización: 3·τ ≈ {t_est:.3f} u.t. "
+                "(la amplitud conserva ~5 % de su valor inicial)."
+            )
+        elif abs(re_max) <= TOL_ESTABILIDAD:
+            texto_decaimiento = (
+                f"Re(λmáx) ≈ {re_max:+.2e}\n\n"
+                "La envolvente se comporta como exp(Re(λmáx)·t) ≈ 1: no hay "
+                "decaimiento apreciable. La constante de tiempo τ → ∞ y no "
+                "existe un tiempo finito de estabilización; la oscilación se "
+                "mantiene."
+            )
+        else:
+            texto_decaimiento = (
+                f"Re(λmáx) = {re_max:+.4f} > 0\n\n"
+                f"La envolvente crece como exp({re_max:+.4f}·t): la anomalía se "
+                "amplifica con el tiempo. No existe tiempo de estabilización "
+                "porque el sistema es inestable."
+            )
+
+        # --- Analítica vs. RK4 -----------------------------------------------
+        error = resultado.error_medio_total
+        error_anomalia = resultado.error_medio_cpu
+
+        if error < 1e-9:
+            calidad = "excelente (prácticamente exacta)"
+        elif error < 1e-6:
+            calidad = "muy alta"
+        elif error < 1e-3:
+            calidad = "buena"
+        else:
+            calidad = "limitada: conviene revisar la rigidez del sistema"
+
+        texto_error = (
+            f"MAE sobre los 4 estados: {error:.3e}\n"
+            f"MAE sobre las anomalías o₁ y o₂: {error_anomalia:.3e}\n\n"
+            "La curva analítica se obtiene con expm(A·t) y es la referencia "
+            f"exacta; RK4 manual con Δt = {T_FINAL / (N_PUNTOS - 1):.3f} u.t. "
+            f"la reproduce con calidad {calidad}."
+        )
+
+        return {
+            "estado": texto_estado,
+            "decaimiento": texto_decaimiento,
+            "error": texto_error,
+        }
+
+    def _refrescar_guia(self) -> None:
+        """Actualiza los textos dinámicos si la guía está abierta."""
+
+        if not self._guia_abierta() or not self._guia_live_labels:
+            return
+
+        textos = self._textos_analisis_vivo()
+        for clave, etiqueta in self._guia_live_labels.items():
+            try:
+                etiqueta.configure(text=textos[clave])
+            except Exception:
+                # La ventana pudo cerrarse entre la comprobación y la escritura.
+                return
+
+    def _aplicar_escenario(
+        self,
+        m: float,
+        c: float,
+        k: float,
+        k12: float,
+        descripcion: str,
+    ) -> None:
+        """Aplica un escenario predefinido a los sliders y recalcula todo."""
+
+        if self._job_actualizacion is not None:
+            try:
+                self.after_cancel(self._job_actualizacion)
+            except Exception:
+                pass
+            self._job_actualizacion = None
+
+        valores = {"m": m, "c": c, "k": k, "k12": k12}
+        for clave, valor in valores.items():
+            self.sliders[clave].set(valor)
+            self.valores_labels[clave].configure(text=f"{valor:.2f}")
+
+        self._actualizar_todo()
+
+        resultado = self._ultimo_resultado
+        etiqueta = self._guia_escenario_label
+        if etiqueta is None or resultado is None:
+            return
+
+        try:
+            etiqueta.configure(
+                text=(
+                    f"Escenario aplicado: m = {m:.2f} · c = {c:.2f} · "
+                    f"k = {k:.2f} · k12 = {k12:.2f}\n"
+                    f"{descripcion}\n\n"
+                    f"Estado: {self._estado_corto(resultado)} · "
+                    f"Re(λmáx) = {resultado.abscisa_espectral:+.4f} · "
+                    f"MAE = {resultado.error_medio_total:.3e}"
+                )
+            )
+        except Exception:
+            pass
+
+    @staticmethod
+    def _estado_corto(resultado: ResultadoSimulacion) -> str:
+        """Devuelve una etiqueta breve del estado a partir del resultado."""
+
+        if resultado.abscisa_espectral < -TOL_ESTABILIDAD:
+            return "ESTABLE"
+        if abs(resultado.abscisa_espectral) <= TOL_ESTABILIDAD:
+            return "MARGINAL"
+        return "INESTABLE"
 
     def _restablecer(self) -> None:
         """Devuelve los cuatro sliders a sus valores por defecto."""
